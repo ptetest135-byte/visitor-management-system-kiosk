@@ -1,0 +1,671 @@
+import React, { useState, useEffect } from 'react';
+import { LogOut, LogIn, Settings, Eye, EyeOff, Check } from 'lucide-react';
+
+const VisitorKiosk = () => {
+  const [currentView, setCurrentView] = useState('welcome');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [visitors, setVisitors] = useState([]);
+  const [secondaryEmail, setSecondaryEmail] = useState('support@epay.com.au');
+  const [checkoutSearch, setCheckoutSearch] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [welcomeTitle, setWelcomeTitle] = useState('Visitor Check-In');
+  const [welcomeSubtitle, setWelcomeSubtitle] = useState('Welcome to ePay Australia');
+  const [companyName, setCompanyName] = useState('ePay Australia');
+  const [adminTab, setAdminTab] = useState('overview');
+  const [savedMessage, setSavedMessage] = useState(false);
+  const [sharedMailboxEmail, setSharedMailboxEmail] = useState('noreply@epay.com.au');
+  const [sharepointUrl, setSharepointUrl] = useState('https://yourdomain.sharepoint.com/sites/visitor-logs/shared%20documents/visitor_logs.csv');
+  const [syncMessage, setSyncMessage] = useState('');
+
+  const [formData, setFormData] = useState({
+    name: '',
+    mobileNumber: '',
+    email: '',
+    companyName: '',
+    reasonForVisit: '',
+    otherReason: '',
+    hostName: '',
+    hostEmail: '',
+  });
+
+  useEffect(() => {
+    let timeout;
+    const resetTimeout = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        if (currentView === 'form') {
+          setCurrentView('welcome');
+          setFormData({
+            name: '',
+            mobileNumber: '',
+            email: '',
+            companyName: '',
+            reasonForVisit: '',
+            otherReason: '',
+            hostName: '',
+            hostEmail: '',
+          });
+        }
+      }, 5 * 60 * 1000);
+    };
+
+    window.addEventListener('click', resetTimeout);
+    window.addEventListener('keypress', resetTimeout);
+    resetTimeout();
+
+    return () => {
+      clearTimeout(timeout);
+      window.removeEventListener('click', resetTimeout);
+      window.removeEventListener('keypress', resetTimeout);
+    };
+  }, [currentView]);
+
+  const handleFormChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const handleCheckIn = () => {
+    if (!formData.name || !formData.mobileNumber || !formData.email || !formData.hostName) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    if (formData.reasonForVisit === 'Other' && !formData.otherReason.trim()) {
+      alert('Please specify your reason for visit');
+      return;
+    }
+
+    const visitorId = Date.now();
+    const newVisitor = {
+      id: visitorId,
+      ...formData,
+      checkInTime: new Date().toLocaleTimeString(),
+      checkOutTime: null,
+      status: 'checked-in'
+    };
+
+    const updatedVisitors = [...visitors, newVisitor];
+    setVisitors(updatedVisitors);
+    window.localStorage.setItem('visitorLogs', JSON.stringify(updatedVisitors));
+    
+    setCurrentView('confirmation');
+    
+    setTimeout(() => {
+      setCurrentView('welcome');
+      setFormData({
+        name: '',
+        mobileNumber: '',
+        email: '',
+        companyName: '',
+        reasonForVisit: '',
+        otherReason: '',
+        hostName: '',
+        hostEmail: '',
+      });
+    }, 3000);
+  };
+
+  const handleCheckOut = (visitorId) => {
+    const updatedVisitors = visitors.map(v =>
+      v.id === visitorId
+        ? { ...v, status: 'checked-out', checkOutTime: new Date().toLocaleTimeString() }
+        : v
+    );
+    setVisitors(updatedVisitors);
+    window.localStorage.setItem('visitorLogs', JSON.stringify(updatedVisitors));
+  };
+
+  const handleCheckoutSearch = () => {
+    if (!checkoutSearch.trim()) {
+      alert('Please enter a phone number or email address');
+      return;
+    }
+    const results = visitors.filter(v => 
+      v.status === 'checked-in' && (
+        v.mobileNumber.toLowerCase().includes(checkoutSearch.toLowerCase()) || 
+        v.email.toLowerCase().includes(checkoutSearch.toLowerCase())
+      )
+    );
+    setSearchResults(results);
+  };
+
+  const performCheckOut = (visitorId) => {
+    handleCheckOut(visitorId);
+    setCheckoutSearch('');
+    setSearchResults([]);
+  };
+
+  const handleAdminLogin = () => {
+    if (adminPassword === '1234') {
+      setCurrentView('admin');
+      setAdminPassword('');
+    } else {
+      alert('Invalid password');
+      setAdminPassword('');
+    }
+  };
+
+  const exportToCSV = () => {
+    if (visitors.length === 0) {
+      alert('No visitor records to export');
+      return;
+    }
+
+    const headers = ['Name', 'Mobile', 'Email', 'Company', 'Reason', 'Host Name', 'Check-in', 'Check-out', 'Status'];
+    const rows = visitors.map(v => [
+      v.name,
+      v.mobileNumber,
+      v.email,
+      v.companyName,
+      v.reasonForVisit === 'Other' ? `Other: ${v.otherReason}` : v.reasonForVisit,
+      v.hostName,
+      v.checkInTime,
+      v.checkOutTime || '-',
+      v.status
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `visitor_logs_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
+  const syncToSharepoint = async () => {
+    if (!sharepointUrl || sharepointUrl.includes('yourdomain')) {
+      alert('Please configure SharePoint URL in settings first');
+      return;
+    }
+
+    if (visitors.length === 0) {
+      alert('No visitor records to sync');
+      return;
+    }
+
+    setSyncMessage('Syncing...');
+
+    try {
+      const headers = ['Name', 'Mobile', 'Email', 'Company', 'Reason', 'Host Name', 'Check-in', 'Check-out', 'Status', 'Date'];
+      const rows = visitors.map(v => [
+        v.name,
+        v.mobileNumber,
+        v.email,
+        v.companyName,
+        v.reasonForVisit === 'Other' ? `Other: ${v.otherReason}` : v.reasonForVisit,
+        v.hostName,
+        v.checkInTime,
+        v.checkOutTime || '-',
+        v.status,
+        new Date().toISOString().split('T')[0]
+      ]);
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `visitor_logs_${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+
+      setSyncMessage('Downloaded CSV - Please upload to SharePoint manually or set up API access');
+      setTimeout(() => setSyncMessage(''), 4000);
+    } catch (error) {
+      setSyncMessage('Sync failed - Please contact your IT team');
+      setTimeout(() => setSyncMessage(''), 3000);
+    }
+  };
+
+  const sendEmailReport = () => {
+    if (visitors.length === 0) {
+      alert('No visitor records to send');
+      return;
+    }
+
+    const recipientEmail = prompt('Enter email address to send the report:', secondaryEmail);
+    if (!recipientEmail) return;
+
+    const headers = ['Name', 'Mobile', 'Email', 'Company', 'Reason', 'Host Name', 'Check-in', 'Check-out', 'Status'];
+    const rows = visitors.map(v => [
+      v.name,
+      v.mobileNumber,
+      v.email,
+      v.companyName,
+      v.reasonForVisit === 'Other' ? `Other: ${v.otherReason}` : v.reasonForVisit,
+      v.hostName,
+      v.checkInTime,
+      v.checkOutTime || 'Still checked in',
+      v.status
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const reportContent = `VISITOR MANAGEMENT REPORT
+Generated: ${new Date().toLocaleString()}
+Sent From: ${sharedMailboxEmail}
+Send To: ${recipientEmail}
+
+SUMMARY:
+- Total Visitors: ${visitors.length}
+- Currently Checked In: ${visitors.filter(v => v.status === 'checked-in').length}
+- Checked Out: ${visitors.filter(v => v.status === 'checked-out').length}
+
+VISITOR DETAILS:
+${csvContent}`;
+
+    const blob = new Blob([reportContent], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `visitor_report_${new Date().toISOString().split('T')[0]}.txt`;
+    link.click();
+
+    alert(`Report downloaded!\n\nTo send via email:\n1. Open the downloaded file\n2. Copy the content\n3. Paste into an email from: ${sharedMailboxEmail}\n4. Send to: ${recipientEmail}`);
+  };
+
+  // Welcome Screen
+  if (currentView === 'welcome') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="mb-8">
+            <svg width="150" height="50" viewBox="0 0 150 50" className="mx-auto" xmlns="http://www.w3.org/2000/svg">
+              <rect x="6" y="8" width="14" height="14" fill="#0052CC" rx="2"/>
+              <rect x="22" y="8" width="14" height="14" fill="#FF8C42" rx="2"/>
+              <rect x="14" y="20" width="14" height="14" fill="#5B4B9F" rx="2"/>
+              <text x="50" y="28" fontSize="22" fontWeight="500" fill="#0052CC" fontFamily="Arial, sans-serif">epay</text>
+            </svg>
+          </div>
+          
+          <h1 className="text-4xl font-bold text-gray-800 mb-4">{welcomeTitle}</h1>
+          <p className="text-xl text-gray-600 mb-12">{welcomeSubtitle}</p>
+          
+          <button
+            onClick={() => setCurrentView('form')}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-12 rounded-lg text-2xl mb-6 shadow-lg transition transform hover:scale-105"
+          >
+            <LogIn className="inline mr-3" size={32} />
+            Check In
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentView('checkout');
+              setCheckoutSearch('');
+              setSearchResults([]);
+            }}
+            className="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-12 rounded-lg text-2xl mb-6 shadow-lg transition transform hover:scale-105"
+          >
+            <LogOut className="inline mr-3" size={32} />
+            Check Out
+          </button>
+
+          <button
+            onClick={() => setCurrentView('admin-login')}
+            className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg text-sm shadow-lg transition"
+          >
+            <Settings className="inline mr-2" size={16} />
+            Admin
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Check-In Form
+  if (currentView === 'form') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+        <button onClick={() => setCurrentView('welcome')} className="mb-4 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded text-sm">
+          Back
+        </button>
+        
+        <div className="max-w-2xl mx-auto bg-white rounded-lg shadow-2xl p-8">
+          <h2 className="text-3xl font-bold text-gray-800 mb-8">Visitor Information</h2>
+          
+          <div className="space-y-6">
+            <div>
+              <label className="block text-gray-700 font-bold mb-2">Full Name *</label>
+              <input type="text" name="name" value={formData.name} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="Enter your full name" />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-bold mb-2">Mobile Number *</label>
+              <input type="tel" name="mobileNumber" value={formData.mobileNumber} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="Enter your mobile number" />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-bold mb-2">Email Address *</label>
+              <input type="email" name="email" value={formData.email} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="Enter your email" />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-bold mb-2">Company Name</label>
+              <input type="text" name="companyName" value={formData.companyName} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="Enter your company name" />
+            </div>
+
+            <div>
+              <label className="block text-gray-700 font-bold mb-2">Reason for Visit *</label>
+              <select name="reasonForVisit" value={formData.reasonForVisit} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg">
+                <option value="">Select a reason</option>
+                <option value="Meeting">Meeting</option>
+                <option value="Delivery">Delivery</option>
+                <option value="Support">Support</option>
+                <option value="Interview">Interview</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            {formData.reasonForVisit === 'Other' && (
+              <div>
+                <label className="block text-gray-700 font-bold mb-2">Please specify your reason *</label>
+                <textarea name="otherReason" value={formData.otherReason} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="Enter details about your visit" rows="4" />
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-gray-700 font-bold mb-2">Host Name *</label>
+                <input type="text" name="hostName" value={formData.hostName} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="Enter name" />
+              </div>
+
+              <div>
+                <label className="block text-gray-700 font-bold mb-2">Host Email (Optional)</label>
+                <input type="email" name="hostEmail" value={formData.hostEmail} onChange={handleFormChange} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="host@example.com" />
+              </div>
+            </div>
+
+            <button onClick={handleCheckIn} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg text-xl transition">
+              Check In
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Confirmation
+  if (currentView === 'confirmation') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="mb-8">
+            <div className="inline-block bg-green-600 text-white rounded-full w-20 h-20 flex items-center justify-center text-4xl">
+              <Check size={48} />
+            </div>
+          </div>
+          <h1 className="text-4xl font-bold text-gray-800 mb-4">Welcome!</h1>
+          <p className="text-xl text-gray-600 mb-4">Your check-in has been recorded.</p>
+          <p className="text-lg text-gray-600">Please proceed to the reception desk.</p>
+          <p className="text-sm text-gray-500 mt-8">Returning to welcome screen...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Checkout
+  if (currentView === 'checkout') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+        <button onClick={() => { setCurrentView('welcome'); setCheckoutSearch(''); setSearchResults([]); }} className="mb-4 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded text-sm">
+          Back
+        </button>
+
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-3xl font-bold text-gray-800 mb-8">Check Out</h2>
+          
+          <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
+            <label className="block text-gray-700 font-bold mb-2">Search by Phone or Email</label>
+            <div className="flex gap-3">
+              <input type="text" value={checkoutSearch} onChange={(e) => setCheckoutSearch(e.target.value)} className="flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-lg" placeholder="Enter phone number or email address" />
+              <button onClick={handleCheckoutSearch} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg">
+                Search
+              </button>
+            </div>
+          </div>
+
+          {checkoutSearch && searchResults.length === 0 && (
+            <div className="bg-white rounded-lg shadow-lg p-8 text-center mb-8">
+              <p className="text-xl text-red-600 font-bold">No matching visitor found</p>
+            </div>
+          )}
+
+          {searchResults.length > 0 && (
+            <div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-4">Search Results</h3>
+              <div className="grid gap-4">
+                {searchResults.map(visitor => (
+                  <div key={visitor.id} className="bg-white rounded-lg shadow-lg p-6">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-2xl font-bold text-gray-800">{visitor.name}</h3>
+                        <p className="text-gray-600">Phone: {visitor.mobileNumber}</p>
+                        <p className="text-gray-600">Email: {visitor.email}</p>
+                      </div>
+                      <button onClick={() => performCheckOut(visitor.id)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg">
+                        Check Out
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!checkoutSearch && (
+            <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+              <p className="text-xl text-gray-600">Enter your phone number or email to check out</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Admin Login
+  if (currentView === 'admin-login') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">Admin Login</h2>
+          
+          <div className="space-y-6">
+            <div>
+              <label className="block text-gray-700 font-bold mb-2">Password</label>
+              <div className="relative">
+                <input type={showPassword ? 'text' : 'password'} value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" placeholder="Enter admin password" />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-3 text-gray-600">
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
+            </div>
+
+            <button onClick={handleAdminLogin} className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-lg">
+              Login
+            </button>
+          </div>
+
+          <button onClick={() => setCurrentView('welcome')} className="w-full mt-4 bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 rounded-lg">
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Admin Dashboard
+  if (currentView === 'admin') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-200 p-4">
+        <button onClick={() => { setCurrentView('welcome'); setAdminPassword(''); setAdminTab('overview'); }} className="mb-4 bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded">
+          Logout
+        </button>
+
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-3xl font-bold text-gray-800 mb-8">Admin Dashboard</h2>
+
+          <div className="flex gap-4 mb-8 flex-wrap">
+            <button onClick={() => setAdminTab('overview')} className={`py-2 px-6 rounded-lg font-bold ${adminTab === 'overview' ? 'bg-blue-600 text-white' : 'bg-white text-gray-800'}`}>
+              Overview
+            </button>
+            <button onClick={() => setAdminTab('settings')} className={`py-2 px-6 rounded-lg font-bold ${adminTab === 'settings' ? 'bg-blue-600 text-white' : 'bg-white text-gray-800'}`}>
+              Settings
+            </button>
+            <button onClick={() => setAdminTab('logs')} className={`py-2 px-6 rounded-lg font-bold ${adminTab === 'logs' ? 'bg-blue-600 text-white' : 'bg-white text-gray-800'}`}>
+              Logs
+            </button>
+          </div>
+
+          {adminTab === 'overview' && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                <p className="text-gray-600 text-sm">Total Check-ins</p>
+                <p className="text-4xl font-bold text-blue-600">{visitors.length}</p>
+              </div>
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                <p className="text-gray-600 text-sm">Currently Checked In</p>
+                <p className="text-4xl font-bold text-green-600">{visitors.filter(v => v.status === 'checked-in').length}</p>
+              </div>
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                <p className="text-gray-600 text-sm">Checked Out</p>
+                <p className="text-4xl font-bold text-orange-600">{visitors.filter(v => v.status === 'checked-out').length}</p>
+              </div>
+            </div>
+          )}
+
+          {adminTab === 'settings' && (
+            <div className="bg-white rounded-lg shadow-lg p-8">
+              <h3 className="text-2xl font-bold text-gray-800 mb-6">Settings</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-gray-700 font-bold mb-2">Welcome Title</label>
+                  <input type="text" value={welcomeTitle} onChange={(e) => setWelcomeTitle(e.target.value)} className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-bold mb-2">Welcome Subtitle</label>
+                  <input type="text" value={welcomeSubtitle} onChange={(e) => setWelcomeSubtitle(e.target.value)} className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-bold mb-2">Company Name</label>
+                  <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-bold mb-2">Secondary Email</label>
+                  <input type="email" value={secondaryEmail} onChange={(e) => setSecondaryEmail(e.target.value)} className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-bold mb-2">Shared Mailbox Email</label>
+                  <input type="email" value={sharedMailboxEmail} onChange={(e) => setSharedMailboxEmail(e.target.value)} className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" />
+                </div>
+
+                <div>
+                  <label className="block text-gray-700 font-bold mb-2">SharePoint CSV URL</label>
+                  <input type="text" value={sharepointUrl} onChange={(e) => setSharepointUrl(e.target.value)} className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" placeholder="https://yourdomain.sharepoint.com/sites/visitor-logs/.../visitor_logs.csv" />
+                  <p className="text-xs text-gray-600 mt-1">For monthly logs: Right-click CSV in SharePoint &gt; Copy link &gt; Paste here</p>
+                </div>
+
+                {savedMessage && (
+                  <div className="p-3 bg-green-50 border-l-4 border-green-600 rounded">
+                    <p className="text-sm text-green-800">Saved successfully!</p>
+                  </div>
+                )}
+
+                <button onClick={() => { setSavedMessage(true); setTimeout(() => setSavedMessage(false), 2000); }} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg">
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          )}
+
+          {adminTab === 'logs' && (
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-2xl font-bold text-gray-800">Visitor Logs</h3>
+                <div className="flex gap-2">
+                  <button onClick={exportToCSV} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-sm">
+                    Export CSV
+                  </button>
+                  <button onClick={syncToSharepoint} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded text-sm">
+                    Sync SharePoint
+                  </button>
+                  <button onClick={sendEmailReport} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded text-sm">
+                    Email Report
+                  </button>
+                </div>
+              </div>
+
+              {syncMessage && (
+                <div className="mb-4 p-3 bg-blue-50 border-l-4 border-blue-600 rounded">
+                  <p className="text-sm text-blue-800">{syncMessage}</p>
+                </div>
+              )}
+
+              {visitors.length === 0 ? (
+                <p className="text-gray-600">No visitor records yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="p-3 text-left">Name</th>
+                        <th className="p-3 text-left">Mobile</th>
+                        <th className="p-3 text-left">Email</th>
+                        <th className="p-3 text-left">Company</th>
+                        <th className="p-3 text-left">Reason</th>
+                        <th className="p-3 text-left">Check-in</th>
+                        <th className="p-3 text-left">Check-out</th>
+                        <th className="p-3 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visitors.map(v => (
+                        <tr key={v.id} className="border-b hover:bg-gray-50">
+                          <td className="p-3">{v.name}</td>
+                          <td className="p-3">{v.mobileNumber}</td>
+                          <td className="p-3">{v.email}</td>
+                          <td className="p-3">{v.companyName}</td>
+                          <td className="p-3">{v.reasonForVisit === 'Other' ? `Other: ${v.otherReason}` : v.reasonForVisit}</td>
+                          <td className="p-3">{v.checkInTime}</td>
+                          <td className="p-3">{v.checkOutTime || '-'}</td>
+                          <td className="p-3">
+                            <span className={`px-3 py-1 rounded-full text-white text-xs font-bold ${v.status === 'checked-in' ? 'bg-green-600' : 'bg-gray-600'}`}>
+                              {v.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+};
+
+export default VisitorKiosk;
